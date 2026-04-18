@@ -15,8 +15,9 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 BASE = Path('/opt/agent-cp')
-LOCAL_DB = BASE / 'log.db'
-OPT_DB = Path('/opt/agent-cp/commands.db')
+LOG_DB = BASE / 'log.db'
+LOCAL_DB = LOG_DB
+OPT_DB = LOG_DB
 COMMANDS_DB = OPT_DB
 PORT = int(os.getenv('PORT', '8091'))
 MCP_HEALTH_URL = 'http://localhost:8093/health'
@@ -44,7 +45,7 @@ basic = HTTPBasic()
 
 
 def conn(db_path: Path | None = None) -> sqlite3.Connection:
-    c = sqlite3.connect(str(db_path or LOCAL_DB))
+    c = sqlite3.connect(str(db_path or LOG_DB))
     c.row_factory = sqlite3.Row
     return c
 
@@ -124,7 +125,7 @@ def normalize_source(value: Any) -> str:
 
 
 def analytics_db_path() -> Path:
-    return OPT_DB
+    return LOG_DB
 
 
 def open_table(db_path: Path) -> tuple[sqlite3.Connection, str, set[str]]:
@@ -336,39 +337,136 @@ HTML = """<!doctype html>
     .brand { display: grid; gap: 4px; }
     h1 { margin: 0; font-size: 24px; letter-spacing: -0.02em; }
     .sub { color: var(--muted); font-size: 13px; }
-    .status-hero { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 16px; background: rgba(8, 13, 25, 0.76); border: 1px solid var(--border); max-width: 100%; min-width: 0; }
-    .orb {
-      width: 18px; height: 18px; border-radius: 999px; position: relative; flex: 0 0 auto;
-      background: var(--ok); box-shadow: 0 0 0 0 rgba(34,197,94,0.38);
+    .status-hero {
+      display: flex; align-items: center; gap: 14px; padding: 12px 14px; border-radius: 16px;
+      background: rgba(8, 13, 25, 0.76); border: 1px solid var(--border); max-width: 100%; min-width: 0;
     }
-    .orb::before {
-      content: ''; position: absolute; inset: -11px; border-radius: inherit; border: 1px solid currentColor; opacity: .18;
-      transform: scale(1); filter: blur(.2px);
+    .status-visual {
+      --accent: #b66cff;
+      --accent-soft: rgba(182, 108, 255, 0.32);
+      --accent-hot: rgba(231, 203, 255, 0.95);
+      --glow: rgba(182, 108, 255, 0.34);
+      --wave-speed: 4.8s;
+      width: 82px;
+      height: 82px;
+      flex: 0 0 auto;
+      position: relative;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 50% 50%, rgba(255,255,255,0.16), rgba(255,255,255,0.0) 28%),
+        radial-gradient(circle at 50% 50%, rgba(182,108,255,0.20), rgba(10,15,28,0.0) 66%);
+      box-shadow:
+        0 0 0 1px rgba(255,255,255,0.03) inset,
+        0 0 28px var(--glow),
+        0 0 58px rgba(121, 69, 255, 0.16);
+      overflow: hidden;
+      color: var(--accent);
+      isolation: isolate;
     }
-    .orb::after {
-      content: ''; position: absolute; inset: -3px; border-radius: inherit; background: currentColor; opacity: .12; filter: blur(9px);
+    .status-visual::before,
+    .status-visual::after {
+      content: '';
+      position: absolute;
+      inset: 8px;
+      border-radius: 50%;
+      pointer-events: none;
+    }
+    .status-visual::before {
+      background:
+        radial-gradient(circle at 50% 42%, rgba(255,255,255,0.26), rgba(255,255,255,0.03) 18%, rgba(255,255,255,0.0) 42%),
+        radial-gradient(circle at 50% 58%, rgba(255,255,255,0.14), rgba(255,255,255,0.0) 34%);
+      filter: blur(1px);
+      opacity: .9;
+      mix-blend-mode: screen;
+    }
+    .status-visual::after {
+      inset: -10px;
+      border: 1px solid rgba(255,255,255,0.08);
+      box-shadow: inset 0 0 30px rgba(255,255,255,0.05);
+      opacity: .35;
+      filter: blur(.4px);
+    }
+    .status-svg { width: 100%; height: 100%; display: block; }
+    .status-wave {
+      fill: none;
+      stroke: currentColor;
+      stroke-linecap: round;
+      opacity: .72;
+      transform-origin: 50% 50%;
+      filter: drop-shadow(0 0 8px currentColor);
+    }
+    .status-wave.wave-1 { stroke-width: 1.5; stroke-dasharray: 18 9; animation: waveSpin var(--wave-speed) linear infinite; }
+    .status-wave.wave-2 { stroke-width: 1.2; stroke-dasharray: 9 12; opacity: .42; animation: waveSpin calc(var(--wave-speed) * 1.36) linear infinite reverse; }
+    .status-wave.wave-3 { stroke-width: 1.0; stroke-dasharray: 4 15; opacity: .22; animation: waveSpin calc(var(--wave-speed) * 1.8) linear infinite; }
+    .status-halo {
+      fill: url(#halo-gradient);
+      opacity: .95;
+      mix-blend-mode: screen;
+      animation: haloPulse 4.6s ease-in-out infinite;
+    }
+    .status-core {
+      fill: url(#core-gradient);
+      transform-origin: 50% 50%;
+      animation: corePulse 3.8s ease-in-out infinite;
+      filter: url(#status-blur);
+    }
+    .status-spark {
+      fill: rgba(255,255,255,0.95);
+      opacity: .82;
+      filter: drop-shadow(0 0 8px rgba(255,255,255,0.95));
+      animation: sparkPulse 2.8s ease-in-out infinite;
+    }
+    .status-visual[data-state='idle'] {
+      --accent: #bd77ff;
+      --accent-soft: rgba(189, 119, 255, 0.32);
+      --accent-hot: rgba(247, 235, 255, 0.92);
+      --glow: rgba(168, 85, 247, 0.42);
+      --wave-speed: 6.4s;
+      filter: saturate(1.05);
+    }
+    .status-visual[data-state='executing'] {
+      --accent: #ffb357;
+      --accent-soft: rgba(255, 179, 87, 0.30);
+      --accent-hot: rgba(255, 250, 241, 1);
+      --glow: rgba(255, 170, 64, 0.52);
+      --wave-speed: 2.3s;
+      filter: saturate(1.25) brightness(1.06);
+    }
+    .status-visual[data-state='down'] {
+      --accent: #ff5f74;
+      --accent-soft: rgba(255, 95, 116, 0.24);
+      --accent-hot: rgba(255, 224, 228, 0.88);
+      --glow: rgba(255, 95, 116, 0.42);
+      --wave-speed: 3.8s;
+      filter: saturate(1.22) brightness(0.95);
+      animation: statusFlicker 2.4s steps(1, end) infinite;
     }
     .status-text { display: grid; gap: 2px; min-width: 0; }
     .status-title { font-size: 12px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); }
     .status-line { font-size: 15px; font-weight: 700; }
     .status-meta { color: var(--muted); font-size: 12px; }
-    .orb[data-state='idle'] { color: var(--ok); background: var(--ok); animation: pulseIdle 3.2s ease-in-out infinite; }
-    .orb[data-state='executing'] { color: var(--warn); background: var(--warn); animation: pulseBusy .9s ease-in-out infinite; }
-    .orb[data-state='down'] { color: var(--down); background: var(--down); animation: pulseDown 1.8s ease-in-out infinite; }
-    .orb[data-state='unknown'] { color: #64748b; background: #64748b; animation: pulseIdle 4.2s ease-in-out infinite; }
-    @keyframes pulseIdle {
-      0%,100% { box-shadow: 0 0 0 0 rgba(34,197,94,0.34); transform: scale(1); }
-      50% { box-shadow: 0 0 0 12px rgba(34,197,94,0.00); transform: scale(1.04); }
+    @keyframes waveSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    @keyframes haloPulse {
+      0%, 100% { opacity: .72; transform: scale(0.98); }
+      50% { opacity: 1; transform: scale(1.02); }
     }
-    @keyframes pulseBusy {
-      0%,100% { box-shadow: 0 0 0 0 rgba(245,158,11,0.34); transform: scale(1); }
-      50% { box-shadow: 0 0 0 14px rgba(245,158,11,0.00); transform: scale(1.08); }
+    @keyframes corePulse {
+      0%, 100% { transform: scale(0.94); opacity: .84; }
+      50% { transform: scale(1.04); opacity: 1; }
     }
-    @keyframes pulseDown {
-      0%,100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.28); transform: scale(1); }
-      50% { box-shadow: 0 0 0 10px rgba(239,68,68,0.00); transform: scale(1.03); }
+    @keyframes sparkPulse {
+      0%, 100% { opacity: .62; transform: translateY(-1px) scale(0.94); }
+      50% { opacity: 1; transform: translateY(0) scale(1.08); }
     }
-    .grid { display: grid; gap: 14px; grid-template-columns: 1fr; min-width: 0; max-width: 100%; }
+    @keyframes statusFlicker {
+      0%, 100% { box-shadow: 0 0 0 1px rgba(255,255,255,0.03) inset, 0 0 28px rgba(255,95,116,0.42), 0 0 58px rgba(255,95,116,0.15); }
+      50% { box-shadow: 0 0 0 1px rgba(255,255,255,0.03) inset, 0 0 20px rgba(255,95,116,0.24), 0 0 38px rgba(255,95,116,0.08); }
+      52% { box-shadow: 0 0 0 1px rgba(255,255,255,0.03) inset, 0 0 34px rgba(255,95,116,0.52), 0 0 68px rgba(255,95,116,0.18); }
+      70% { box-shadow: 0 0 0 1px rgba(255,255,255,0.03) inset, 0 0 24px rgba(255,95,116,0.32), 0 0 50px rgba(255,95,116,0.12); }
+    }
+
     .grid.two { grid-template-columns: 1fr; }
     .card { padding: 16px; overflow-x: hidden; }
     .section-title { margin: 0 0 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .12em; font-size: 12px; }
@@ -446,12 +544,38 @@ HTML = """<!doctype html>
         <h1>Agent Control Panel</h1>
         <div class=\"sub\">port __PORT__ · minimal mobile-first dashboard with live MCP state</div>
       </div>
-      <div class=\"status-hero\">
-        <div class=\"orb\" id=\"mcp-orb\" data-state=\"unknown\"></div>
-        <div class=\"status-text\">
-          <div class=\"status-title\">MCP state</div>
-          <div class=\"status-line\" id=\"mcp-state\">checking…</div>
-          <div class=\"status-meta\" id=\"mcp-meta\">polling http://localhost:8093/health</div>
+      <div class="status-hero">
+        <div class="status-visual" id="mcp-visual" data-state="unknown" aria-hidden="true">
+          <svg class="status-svg" viewBox="0 0 120 120" role="img" aria-label="MCP status indicator">
+            <defs>
+              <filter id="status-blur" x="-40%" y="-40%" width="180%" height="180%">
+                <feGaussianBlur stdDeviation="1.8" />
+              </filter>
+              <radialGradient id="halo-gradient" cx="50%" cy="42%" r="62%">
+                <stop offset="0%" stop-color="var(--accent-hot)" stop-opacity="0.95" />
+                <stop offset="34%" stop-color="var(--accent)" stop-opacity="0.34" />
+                <stop offset="70%" stop-color="var(--accent-soft)" stop-opacity="0.14" />
+                <stop offset="100%" stop-color="rgba(0,0,0,0)" stop-opacity="0" />
+              </radialGradient>
+              <radialGradient id="core-gradient" cx="50%" cy="42%" r="62%">
+                <stop offset="0%" stop-color="var(--accent-hot)" stop-opacity="1" />
+                <stop offset="18%" stop-color="var(--accent)" stop-opacity="0.96" />
+                <stop offset="48%" stop-color="var(--accent-soft)" stop-opacity="0.72" />
+                <stop offset="100%" stop-color="rgba(0,0,0,0)" stop-opacity="0" />
+              </radialGradient>
+            </defs>
+            <circle class="status-wave wave-3" cx="60" cy="60" r="45" />
+            <circle class="status-wave wave-2" cx="60" cy="60" r="36" />
+            <circle class="status-wave wave-1" cx="60" cy="60" r="28" />
+            <circle class="status-halo" cx="60" cy="60" r="42" />
+            <circle class="status-core" cx="60" cy="60" r="22" />
+            <circle class="status-spark" cx="54" cy="47" r="4.2" />
+          </svg>
+        </div>
+        <div class="status-text">
+          <div class="status-title">MCP state</div>
+          <div class="status-line" id="mcp-state">checking…</div>
+          <div class="status-meta" id="mcp-meta">polling http://localhost:8093/health</div>
         </div>
       </div>
     </div>
@@ -467,21 +591,22 @@ HTML = """<!doctype html>
           <div class=\"monitor-note\">Local control surface</div>
           <div class=\"pill idle\"><span class=\"dot\"></span>ready</div>
         </div>
-        <div class=\"monitor-row\">
+        <div class="monitor-row">
           <div>
-            <div class=\"monitor-name\">MCP server</div>
-            <div class=\"monitor-url\">http://localhost:8093/health</div>
+            <div class="monitor-name">MCP server</div>
+            <div class="monitor-url">http://localhost:8093/health</div>
           </div>
-          <div class=\"monitor-note\" id=\"monitor-note\">polling…</div>
-          <div class=\"pill unknown\" id=\"monitor-pill\"><span class=\"dot\"></span>unknown</div>
+          <div class="monitor-note" id="monitor-note">polling…</div>
+          <div class="pill unknown" id="monitor-pill"><span class="dot"></span>unknown</div>
         </div>
       </div>
     </div>
 
-    <div class=\"tabbar\">
-      <button class=\"tab-btn active\" data-tab=\"exec\" type=\"button\">Exec</button>
-      <button class=\"tab-btn\" data-tab=\"logs\" type=\"button\">Logs</button>
+    <div class="tabbar">
+      <button class="tab-btn active" data-tab="exec" type="button">Exec</button>
+      <button class="tab-btn" data-tab="logs" type="button">Logs</button>
     </div>
+
 
     <div class=\"view active\" id=\"exec-view\">
       <div class=\"content\">
@@ -565,24 +690,6 @@ const fmt = new Intl.DateTimeFormat('hu-HU', {
   hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
 });
 
-function formatTimestamp(value) {
-  if (!value) return '';
-  const raw = String(value).trim();
-  if (!raw) return '';
-  const hasTimezone = /([zZ]|[+-]\\d{2}:?\\d{2})$/.test(raw);
-  const normalized = raw.includes('T') ? (hasTimezone ? raw : `${raw}Z`) : `${raw.replace(' ', 'T')}Z`;
-  const parsed = new Date(normalized);
-  if (Number.isNaN(parsed.getTime())) return raw;
-  const parts = Object.fromEntries(fmt.formatToParts(parsed).map(p => [p.type, p.value]));
-  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
-}
-
-function shortText(value, limit = 220) {
-  const text = String(value ?? '').trim();
-  if (!text) return '—';
-  return text.length > limit ? `${text.slice(0, limit)}…` : text;
-}
-
 function statusClass(state) {
   const s = String(state || 'unknown').toLowerCase();
   return ['idle', 'executing', 'down'].includes(s) ? s : 'unknown';
@@ -590,14 +697,14 @@ function statusClass(state) {
 
 function setMcpState(data) {
   const state = statusClass(data?.state);
-  const orb = document.getElementById('mcp-orb');
+  const visual = document.getElementById('mcp-visual');
   const stateEl = document.getElementById('mcp-state');
   const metaEl = document.getElementById('mcp-meta');
   const noteEl = document.getElementById('monitor-note');
   const pill = document.getElementById('monitor-pill');
   const labelMap = {idle: 'idle', executing: 'executing', down: 'down', unknown: 'unknown'};
   const meta = data?.reachable ? `${data.health_url || 'http://localhost:8093/health'} · updated ${data.updated_at ? formatTimestamp(data.updated_at) : 'now'}` : `${data.health_url || 'http://localhost:8093/health'} · unavailable`;
-  orb.dataset.state = state;
+  visual.dataset.state = state;
   stateEl.textContent = data?.reachable ? labelMap[state] : 'down';
   metaEl.textContent = meta;
   noteEl.textContent = data?.reachable
@@ -606,32 +713,22 @@ function setMcpState(data) {
   pill.className = `pill ${state}`;
   pill.innerHTML = `<span class=\"dot\"></span>${esc(data?.reachable ? labelMap[state] : 'down')}`;
 }
-
-async function loadMcpHealth() {
-  try {
-    const res = await fetch('/mcp-health', {cache: 'no-store'});
-    const data = await res.json();
-    setMcpState(data);
-  } catch (err) {
-    setMcpState({reachable: false, state: 'down', error: err?.message || 'fetch failed', health_url: 'http://localhost:8093/health'});
-  }
-}
-
 function logCard(row) {
   const exitCode = Number(row.exit_code ?? row.code ?? 0);
   return `
-    <article class=\"log-card\">
-      <div class=\"log-head\">
-        <div class=\"mono\">${esc(formatTimestamp(row.created_at))}</div>
-        <div class=\"pill ${esc(String(row.source || 'agent').toLowerCase() === 'user' ? 'idle' : 'unknown')}\"><span class=\"dot\"></span>${esc(row.source || 'agent')}</div>
-        <div class=\"mono log-summary\">${esc(shortText(row.cmd, 120))}</div>
-        <div class=\"pill ${exitCode === 0 ? 'idle' : 'down'}\"><span class=\"dot\"></span>exit ${esc(exitCode)}</div>
+    <article class="log-card">
+      <div class="log-head">
+        <div class="mono">${esc(formatTimestamp(row.created_at))}</div>
+        <div class="pill ${esc(String(row.source || 'agent').toLowerCase() === 'user' ? 'idle' : 'unknown')}"><span class="dot"></span>${esc(row.source || 'agent')}</div>
+        <div class="mono log-summary">${esc(shortText(row.cmd, 120))}</div>
+        <div class="pill ${exitCode === 0 ? 'idle' : 'down'}"><span class="dot"></span>exit ${esc(exitCode)}</div>
       </div>
-      <div class=\"log-cmd mono\">${esc(row.cmd || '')}</div>
-      <div style=\"margin-top:10px\"><pre class=\"mono\">${esc(shortText(row.stdout || '', 280))}</pre></div>
-      ${exitCode !== 0 ? `<div style=\"margin-top:10px\"><pre class=\"mono\">${esc(shortText(row.stderr || '', 280))}</pre></div>` : ''}
+      <div class="log-cmd mono">${esc(row.cmd || '')}</div>
+      <div style="margin-top:10px"><pre class="mono">${esc(shortText(row.stdout || '', 280))}</pre></div>
+      ${exitCode !== 0 ? `<div style="margin-top:10px"><pre class="mono">${esc(shortText(row.stderr || '', 280))}</pre></div>` : ''}
     </article>`;
 }
+
 
 function statRow(row) {
   const exitCode = Number(row.exit_code ?? row.code ?? 0);
@@ -643,7 +740,7 @@ function topRow(row) {
 }
 
 async function loadStats() {
-  const res = await fetch('/stats', {cache: 'no-store'});
+  const res = await fetch('/stats', {cache: 'no-store', credentials: 'include'});
   const stats = await res.json();
   document.getElementById('total-errors').textContent = stats.total_errors ?? 0;
   document.getElementById('top10-count').textContent = (stats.top_commands || []).length;
@@ -659,18 +756,37 @@ async function loadLogs() {
   }
   logsAbortController = new AbortController();
   const entries = document.getElementById('entries');
-  entries.innerHTML = '<div class=\"muted\">Loading…</div>';
-  const url = `/logs?source=${encodeURIComponent(currentSource)}&q=${encodeURIComponent(currentQuery)}&limit=20&errors_only=${currentErrorsOnly ? '1' : '0'}&_=${Date.now()}`;
+  if (!entries) return;
+  entries.innerHTML = '<div class="muted">Loading…</div>';
+  const url = '/logs?source=' + encodeURIComponent(currentSource)
+    + '&q=' + encodeURIComponent(currentQuery)
+    + '&limit=20&errors_only=' + (currentErrorsOnly ? '1' : '0')
+    + '&_=' + Date.now();
   try {
-    const res = await fetch(url, {cache: 'no-store', signal: logsAbortController.signal});
-    const data = await res.json();
+    const res = await fetch(url, {cache: 'no-store', credentials: 'include', signal: logsAbortController.signal});
+    const raw = await res.text();
     if (requestId !== logsRequestSeq) return;
-    entries.innerHTML = Array.isArray(data) && data.length ? data.map(logCard).join('') : '<div class=\"muted\">No logs</div>';
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    let data = [];
+    if (raw) {
+      try {
+        data = JSON.parse(raw);
+      } catch (_) {
+        throw new Error('invalid JSON');
+      }
+    }
+    const rows = Array.isArray(data) ? data
+      : Array.isArray(data?.logs) ? data.logs
+      : Array.isArray(data?.entries) ? data.entries
+      : Array.isArray(data?.data) ? data.data
+      : [];
+    entries.innerHTML = rows.length ? rows.map(logCard).join('') : '<div class="muted">No logs</div>';
   } catch (err) {
     if (err && err.name === 'AbortError') return;
-    entries.innerHTML = '<div class=\"muted\">Unable to load logs</div>';
+    entries.innerHTML = '<div class="muted">Unable to load logs</div>';
   }
 }
+
 
 function activateTab(name) {
   document.querySelectorAll('.view').forEach((el) => el.classList.toggle('active', el.id === `${name}-view`));
@@ -689,7 +805,7 @@ document.getElementById('exec-form').addEventListener('submit', async (e) => {
     cmd: document.getElementById('cmd').value,
     source: document.getElementById('source-input').value || 'user',
   };
-  const res = await fetch('/exec', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
+  const res = await fetch('/exec', {method: 'POST', credentials: 'include', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
   const data = await res.json();
   const lastResult = document.getElementById('last-result');
   lastResult.style.display = 'block';
@@ -754,4 +870,5 @@ def exec_cmd(payload: dict[str, Any], _: str = Depends(auth)) -> JSONResponse:
 @app.get('/mcp-health')
 def mcp_health_endpoint(_: str = Depends(auth)) -> JSONResponse:
     return JSONResponse(mcp_health())
+
 
