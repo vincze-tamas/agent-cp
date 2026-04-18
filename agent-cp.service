@@ -1,0 +1,16 @@
+[Unit]
+Description=Agent Control Panel
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/agent-cp
+Environment=PORT=8090
+ExecStart=/opt/agent-cp/venv/bin/python /opt/agent-cp/app.py
+Restart=always
+RestartSec=3
+User=agentcp
+Group=agentcp
+
+[Install]
+WantedBy=multi-user.target
